@@ -1,300 +1,299 @@
 #!/usr/bin/env python3
 """
-Demo script for SVTRv2 Scene Text Recognition Model
-
-This script demonstrates how to use the PyTorch implementation of SVTRv2 
-with RCTC decoder for scene text recognition.
+Demo script for PP-OCRv3 Text Recognition Model
+This script demonstrates the basic functionality of the model.
 """
 
+import os
+import sys
 import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import DataLoader, Dataset
 import numpy as np
 import matplotlib.pyplot as plt
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 import argparse
-import os
-import json
-from typing import List, Dict, Tuple
 
-from svtrv2_model import create_svtrv2_model, SVTRv2Config
+# Add project root to path
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from models.pp_ocrv3_rec import pp_ocrv3_rec_english
+from utils.postprocess import greedy_decode
 
 
-class TextRecognitionDataset(Dataset):
-    """
-    Simple dataset class for text recognition
-    You can replace this with your own dataset implementation
-    """
-    def __init__(self, image_paths: List[str], labels: List[str], char_to_idx: Dict[str, int], 
-                 max_length: int = 25, img_height: int = 32, img_width: int = 128):
-        self.image_paths = image_paths
-        self.labels = labels
-        self.char_to_idx = char_to_idx
-        self.max_length = max_length
-        self.img_height = img_height
-        self.img_width = img_width
-        
-    def __len__(self):
-        return len(self.image_paths)
+def create_synthetic_text_image(text, img_size=(48, 320), font_size=32):
+    """Create a synthetic text image for testing."""
+    img = Image.new('RGB', (img_size[1], img_size[0]), color='white')
+    draw = ImageDraw.Draw(img)
     
-    def __getitem__(self, idx):
-        # Load and preprocess image
+    try:
+        # Try to use a system font
+        font = ImageFont.truetype("arial.ttf", font_size)
+    except:
+        # Fall back to default font
         try:
-            image = Image.open(self.image_paths[idx]).convert('RGB')
-            image = image.resize((self.img_width, self.img_height))
-            image = np.array(image, dtype=np.float32) / 255.0
-            image = torch.from_numpy(image).permute(2, 0, 1)  # CHW format
+            font = ImageFont.load_default()
         except:
-            # Create dummy image if loading fails
-            image = torch.randn(3, self.img_height, self.img_width)
+            font = None
+    
+    # Get text size
+    if font:
+        bbox = draw.textbbox((0, 0), text, font=font)
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
+    else:
+        text_width = len(text) * 10
+        text_height = 15
+    
+    # Center the text
+    x = (img_size[1] - text_width) // 2
+    y = (img_size[0] - text_height) // 2
+    
+    # Draw text
+    draw.text((x, y), text, fill='black', font=font)
+    
+    return img
+
+
+def test_model_forward():
+    """Test basic model forward pass."""
+    print("Testing model forward pass...")
+    
+    # Create model
+    model = pp_ocrv3_rec_english()
+    model.eval()
+    
+    # Create synthetic input
+    batch_size = 2
+    input_tensor = torch.randn(batch_size, 3, 48, 320)
+    
+    # Forward pass
+    with torch.no_grad():
+        output = model(input_tensor)
+    
+    if isinstance(output, tuple):
+        features, predictions = output
+        print(f"Features shape: {features.shape}")
+        print(f"Predictions shape: {predictions.shape}")
+    else:
+        predictions = output
+        print(f"Predictions shape: {predictions.shape}")
+    
+    # Test decoding
+    decoded = greedy_decode(predictions)
+    print(f"Decoded sequences length: {[len(seq) for seq in decoded]}")
+    
+    print("✓ Model forward pass test passed!")
+    return True
+
+
+def test_text_generation_and_recognition():
+    """Test with synthetic text images."""
+    print("\nTesting text generation and recognition...")
+    
+    # Create model
+    model = pp_ocrv3_rec_english()
+    model.eval()
+    
+    # Test texts
+    test_texts = ["HELLO", "WORLD", "PYTORCH", "OCR", "123", "ABC123"]
+    
+    results = []
+    
+    for text in test_texts:
+        # Create synthetic image
+        img = create_synthetic_text_image(text)
         
-        # Encode label
-        label = self.labels[idx]
-        encoded_label = []
-        for char in label:
-            if char in self.char_to_idx:
-                encoded_label.append(self.char_to_idx[char])
-            else:
-                encoded_label.append(self.char_to_idx.get('<UNK>', 1))  # Unknown character
+        # Convert to tensor
+        img_array = np.array(img).transpose(2, 0, 1).astype(np.float32) / 255.0
+        # Normalize (simple normalization)
+        img_array = (img_array - 0.5) / 0.5
+        input_tensor = torch.tensor(img_array).unsqueeze(0)
         
-        # Pad or truncate to max_length
-        if len(encoded_label) > self.max_length:
-            encoded_label = encoded_label[:self.max_length]
+        # Forward pass
+        with torch.no_grad():
+            output = model(input_tensor)
+        
+        if isinstance(output, tuple):
+            predictions = output[1]
         else:
-            encoded_label.extend([0] * (self.max_length - len(encoded_label)))  # 0 for padding
+            predictions = output
         
-        return image, torch.tensor(encoded_label, dtype=torch.long)
-
-
-def create_character_dict(texts: List[str]) -> Tuple[Dict[str, int], Dict[int, str]]:
-    """Create character dictionary from text samples"""
-    chars = set()
-    for text in texts:
-        chars.update(text)
-    
-    # Add special tokens
-    char_list = ['<BLANK>', '<UNK>'] + sorted(list(chars))
-    
-    char_to_idx = {char: idx for idx, char in enumerate(char_list)}
-    idx_to_char = {idx: char for idx, char in enumerate(char_list)}
-    
-    return char_to_idx, idx_to_char
-
-
-def generate_synthetic_data(num_samples: int = 100) -> Tuple[List[np.ndarray], List[str]]:
-    """Generate synthetic text recognition data for demo"""
-    import random
-    import string
-    
-    images = []
-    labels = []
-    
-    # Character set for synthetic data
-    chars = string.ascii_letters + string.digits
-    
-    for _ in range(num_samples):
-        # Generate random text
-        text_length = random.randint(3, 8)
-        text = ''.join(random.choices(chars, k=text_length))
-        labels.append(text)
+        # Decode
+        decoded = greedy_decode(predictions)
         
-        # Generate synthetic image (just noise for demo)
-        image = np.random.rand(32, 128, 3) * 255
-        images.append(image.astype(np.uint8))
+        # Convert to characters (simple mapping for demo)
+        if len(decoded[0]) > 0:
+            # This is a simplified character mapping for demo
+            # In practice, you'd use the actual character dictionary
+            pred_chars = []
+            for idx in decoded[0]:
+                if idx < len(model.character_list):
+                    pred_chars.append(model.character_list[idx])
+            pred_text = ''.join(pred_chars)
+        else:
+            pred_text = ""
+        
+        results.append((text, pred_text))
+        print(f"Ground truth: '{text}' -> Prediction: '{pred_text}'")
     
-    return images, labels
+    print("✓ Text generation and recognition test completed!")
+    return results
 
 
-def train_model(model, train_loader, val_loader, num_epochs: int = 10, lr: float = 0.001):
-    """Simple training loop for demonstration"""
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = model.to(device)
+def visualize_model_architecture():
+    """Visualize model architecture information."""
+    print("\nModel Architecture Information:")
+    print("-" * 50)
     
-    optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=0.05)
-    scheduler = optim.lr_scheduler.OneCycleLR(
-        optimizer, 
-        max_lr=lr,
-        epochs=num_epochs,
-        steps_per_epoch=len(train_loader)
-    )
+    model = pp_ocrv3_rec_english()
     
-    model.set_training_mode(True)
+    # Count parameters
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     
-    for epoch in range(num_epochs):
-        # Training
-        model.train()
-        total_loss = 0
-        num_batches = 0
-        
-        for batch_idx, (images, targets) in enumerate(train_loader):
-            images = images.to(device)
-            targets = targets.to(device)
-            
-            optimizer.zero_grad()
-            
-            output = model(images, targets)
-            loss = output['loss']
-            
-            loss.backward()
-            optimizer.step()
-            scheduler.step()
-            
-            total_loss += loss.item()
-            num_batches += 1
-            
-            if batch_idx % 10 == 0:
-                print(f'Epoch {epoch+1}/{num_epochs}, Batch {batch_idx}, Loss: {loss.item():.4f}')
-        
-        avg_loss = total_loss / num_batches
-        print(f'Epoch {epoch+1}/{num_epochs} completed. Average loss: {avg_loss:.4f}')
-        
-        # Validation
-        if val_loader is not None:
-            model.eval()
-            val_loss = 0
-            val_batches = 0
-            
-            with torch.no_grad():
-                for images, targets in val_loader:
-                    images = images.to(device)
-                    targets = targets.to(device)
-                    
-                    output = model(images, targets)
-                    val_loss += output['loss'].item()
-                    val_batches += 1
-            
-            avg_val_loss = val_loss / val_batches
-            print(f'Validation loss: {avg_val_loss:.4f}')
+    print(f"Total parameters: {total_params:,}")
+    print(f"Trainable parameters: {trainable_params:,}")
+    print(f"Model size: {total_params * 4 / 1024 / 1024:.2f} MB (float32)")
+    
+    # Print model structure
+    print("\nModel Structure:")
+    print(model)
     
     return model
 
 
-def inference_demo(model, test_images: List[np.ndarray], idx_to_char: Dict[int, str]):
-    """Demonstration of model inference"""
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = model.to(device)
-    model.set_training_mode(False)
+def benchmark_model_speed():
+    """Benchmark model inference speed."""
+    print("\nBenchmarking model speed...")
     
-    predictions = []
+    model = pp_ocrv3_rec_english()
+    model.eval()
     
-    with torch.no_grad():
-        for image in test_images:
-            # Preprocess image
-            if isinstance(image, np.ndarray):
-                image = torch.from_numpy(image.astype(np.float32) / 255.0)
-                if len(image.shape) == 3:
-                    image = image.permute(2, 0, 1)  # HWC to CHW
-            
-            image = image.unsqueeze(0).to(device)  # Add batch dimension
-            
-            # Get prediction
-            output = model(image)
-            predicted_indices = output['predictions'][0]  # First (and only) item in batch
-            
-            # Decode to text
-            predicted_text = ''.join([idx_to_char.get(idx, '<UNK>') for idx in predicted_indices])
-            predictions.append(predicted_text)
+    # Warm up
+    dummy_input = torch.randn(1, 3, 48, 320)
+    for _ in range(10):
+        with torch.no_grad():
+            _ = model(dummy_input)
     
-    return predictions
+    # Benchmark
+    import time
+    
+    num_runs = 100
+    batch_sizes = [1, 4, 8]
+    
+    for batch_size in batch_sizes:
+        input_tensor = torch.randn(batch_size, 3, 48, 320)
+        
+        start_time = time.time()
+        for _ in range(num_runs):
+            with torch.no_grad():
+                _ = model(input_tensor)
+        end_time = time.time()
+        
+        avg_time = (end_time - start_time) / num_runs
+        throughput = batch_size / avg_time
+        
+        print(f"Batch size {batch_size}: {avg_time*1000:.2f} ms/batch, {throughput:.2f} images/sec")
+    
+    print("✓ Speed benchmark completed!")
+
+
+def create_demo_visualization():
+    """Create a visualization of the demo results."""
+    print("\nCreating demo visualization...")
+    
+    # Create synthetic images with different texts
+    test_texts = ["HELLO", "WORLD", "PyTorch", "OCR2024"]
+    
+    fig, axes = plt.subplots(2, 4, figsize=(16, 8))
+    axes = axes.flatten()
+    
+    model = pp_ocrv3_rec_english()
+    model.eval()
+    
+    for i, text in enumerate(test_texts):
+        # Create image
+        img = create_synthetic_text_image(text, font_size=24)
+        
+        # Show original image
+        axes[i].imshow(img)
+        axes[i].set_title(f"Input: '{text}'")
+        axes[i].axis('off')
+        
+        # Process with model (simplified)
+        img_array = np.array(img).transpose(2, 0, 1).astype(np.float32) / 255.0
+        img_array = (img_array - 0.5) / 0.5
+        input_tensor = torch.tensor(img_array).unsqueeze(0)
+        
+        with torch.no_grad():
+            output = model(input_tensor)
+        
+        if isinstance(output, tuple):
+            predictions = output[1]
+        else:
+            predictions = output
+        
+        # Visualize predictions (heatmap)
+        pred_array = predictions.squeeze().numpy()
+        
+        axes[i + 4].imshow(pred_array.T, aspect='auto', cmap='viridis')
+        axes[i + 4].set_title(f"Predictions\nShape: {pred_array.shape}")
+        axes[i + 4].set_xlabel('Time steps')
+        axes[i + 4].set_ylabel('Character classes')
+    
+    plt.tight_layout()
+    plt.savefig('demo_results.png', dpi=150, bbox_inches='tight')
+    plt.show()
+    
+    print("✓ Demo visualization saved as 'demo_results.png'")
 
 
 def main():
-    parser = argparse.ArgumentParser(description='SVTRv2 Text Recognition Demo')
-    parser.add_argument('--mode', choices=['train', 'inference', 'demo'], default='demo',
-                        help='Mode to run: train, inference, or demo')
-    parser.add_argument('--data_path', type=str, help='Path to dataset')
-    parser.add_argument('--model_path', type=str, help='Path to saved model')
-    parser.add_argument('--num_epochs', type=int, default=10, help='Number of training epochs')
-    parser.add_argument('--batch_size', type=int, default=8, help='Batch size')
-    parser.add_argument('--lr', type=float, default=0.001, help='Learning rate')
+    parser = argparse.ArgumentParser(description='PP-OCRv3 Demo Script')
+    parser.add_argument('--test', nargs='*', 
+                       choices=['forward', 'text', 'arch', 'speed', 'viz'],
+                       default=['forward', 'text', 'arch'],
+                       help='Tests to run')
+    parser.add_argument('--device', type=str, default='cpu',
+                       help='Device to use (cpu/cuda)')
     
     args = parser.parse_args()
     
-    if args.mode == 'demo':
-        print("Running SVTRv2 Demo with Synthetic Data...")
-        
-        # Generate synthetic data
-        images, labels = generate_synthetic_data(num_samples=200)
-        
-        # Create character dictionary
-        char_to_idx, idx_to_char = create_character_dict(labels)
-        
-        print(f"Generated {len(images)} synthetic samples")
-        print(f"Character vocabulary size: {len(char_to_idx)}")
-        print(f"Sample labels: {labels[:5]}")
-        
-        # Create model
-        config = {'num_classes': len(char_to_idx)}
-        model = create_svtrv2_model(config)
-        
-        print(f"Model created with {sum(p.numel() for p in model.parameters()):,} parameters")
-        
-        # Create datasets (split 80/20 for train/val)
-        split_idx = int(0.8 * len(images))
-        
-        # Save synthetic images temporarily for dataset
-        import tempfile
-        temp_dir = tempfile.mkdtemp()
-        image_paths = []
-        
-        for i, img in enumerate(images):
-            img_path = os.path.join(temp_dir, f"img_{i}.png")
-            Image.fromarray(img).save(img_path)
-            image_paths.append(img_path)
-        
-        train_dataset = TextRecognitionDataset(
-            image_paths[:split_idx], 
-            labels[:split_idx], 
-            char_to_idx
-        )
-        val_dataset = TextRecognitionDataset(
-            image_paths[split_idx:], 
-            labels[split_idx:], 
-            char_to_idx
-        )
-        
-        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-        val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
-        
-        # Train model
-        print("\nStarting training...")
-        trained_model = train_model(model, train_loader, val_loader, 
-                                  num_epochs=args.num_epochs, lr=args.lr)
-        
-        # Test inference
-        print("\nTesting inference...")
-        test_images = images[split_idx:split_idx+5]  # Take 5 test samples
-        test_labels = labels[split_idx:split_idx+5]
-        
-        predictions = inference_demo(trained_model, test_images, idx_to_char)
-        
-        print("\nInference Results:")
-        for i, (true_label, pred_label) in enumerate(zip(test_labels, predictions)):
-            print(f"Sample {i+1}: True='{true_label}' | Predicted='{pred_label}'")
-        
-        # Clean up temporary files
-        import shutil
-        shutil.rmtree(temp_dir)
-        
-    elif args.mode == 'train':
-        if not args.data_path:
-            print("Please provide --data_path for training mode")
-            return
-        
-        print("Training mode - implement your dataset loading here")
-        # You would implement your actual dataset loading here
-        
-    elif args.mode == 'inference':
-        if not args.model_path:
-            print("Please provide --model_path for inference mode")
-            return
-        
-        print("Inference mode - implement your inference pipeline here")
-        # You would implement your inference pipeline here
+    # Set device
+    device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
+    print(f"Using device: {device}")
     
-    print("Demo completed!")
+    print("=" * 60)
+    print("PP-OCRv3 Text Recognition Model Demo")
+    print("=" * 60)
+    
+    try:
+        if 'forward' in args.test:
+            test_model_forward()
+        
+        if 'text' in args.test:
+            test_text_generation_and_recognition()
+        
+        if 'arch' in args.test:
+            visualize_model_architecture()
+        
+        if 'speed' in args.test:
+            benchmark_model_speed()
+        
+        if 'viz' in args.test:
+            create_demo_visualization()
+        
+        print("\n" + "=" * 60)
+        print("✓ All demo tests completed successfully!")
+        print("=" * 60)
+        
+    except Exception as e:
+        print(f"\n❌ Demo failed with error: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+    
+    return 0
 
 
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__':
+    exit(main())

@@ -1,288 +1,304 @@
-# SVTRv2 with RCTC Decoder - PyTorch Implementation
+# PP-OCRv3 Text Recognition - PyTorch Implementation
 
-A PyTorch implementation of SVTRv2 (Scene Text Recognition with Vision Transformer v2) with RCTC (Residual CTC) decoder, converted from the PaddleOCR configuration.
+A complete PyTorch implementation of the **en_PP-OCRv3_rec_slim** text recognition model from PaddleOCR. This implementation combines the lightweight LCNet backbone with SVTR (Scene Text Recognition with a Single Visual Model) transformer blocks for efficient and accurate text recognition.
 
-## Overview
+## 🏗️ Architecture Overview
 
-This implementation provides a complete scene text recognition model based on the SVTRv2 architecture with the following key components:
+The PP-OCRv3 text recognition model consists of three main components:
 
-- **SVTRv2LNConvTwo33 Encoder**: A hierarchical vision transformer with mixed attention mechanisms (Conv, FGlobal, Global)
-- **RCTC Decoder**: Residual CTC decoder that enhances feature representation before CTC alignment
-- **Modular Design**: Easy to customize and extend for different datasets and use cases
+1. **LCNet Backbone**: A lightweight CNN backbone that extracts features from input images
+2. **SVTR Transformer**: Global Mix Blocks that capture long-range dependencies in text sequences
+3. **CTC Head**: Connectionist Temporal Classification for sequence-to-sequence prediction without explicit alignment
 
-## Architecture Details
+### Key Features
 
-### SVTRv2 Encoder
+- **Lightweight**: Optimized for mobile and edge deployment
+- **High Accuracy**: Combines CNN efficiency with transformer effectiveness  
+- **CTC-based**: No need for character-level alignment during training
+- **Flexible**: Supports custom character dictionaries and multiple languages
+- **Production-ready**: Includes training, evaluation, and inference pipelines
 
-The encoder follows a hierarchical design with three stages:
-
-| Stage | Dimensions | Depth | Heads | Mixer Pattern |
-|-------|------------|-------|-------|---------------|
-| 1 | 128 | 6 | 4 | Conv×6 |
-| 2 | 256 | 6 | 8 | Conv×2, FGlobal×1, Global×3 |
-| 3 | 384 | 6 | 12 | Global×6 |
-
-**Key Features:**
-- **Conv Mixer**: Local feature interaction using depthwise convolutions
-- **FGlobal Mixer**: Fast global attention with spatial reduction
-- **Global Mixer**: Full self-attention for long-range dependencies
-- **Hierarchical Processing**: Progressive feature refinement across stages
-
-### RCTC Decoder
-
-The RCTC (Residual CTC) decoder enhances the standard CTC approach with:
-
-- **Residual Blocks**: Feature enhancement through residual connections
-- **Sequence Encoder**: Bidirectional LSTM for temporal modeling
-- **Dual Output Paths**: Main path + residual path for improved gradient flow
-- **Adaptive Pooling**: Converts 2D features to sequence format
-
-## File Structure
+## 📁 Project Structure
 
 ```
-├── svtrv2_encoder.py      # SVTRv2LNConvTwo33 encoder implementation
-├── rctc_decoder.py        # RCTC decoder and CTC loss implementation
-├── svtrv2_model.py        # Complete model combining encoder + decoder
-├── demo.py                # Demo script with training/inference examples
-└── README.md              # This file
+pp-ocrv3-pytorch/
+├── models/
+│   ├── __init__.py
+│   ├── lcnet.py              # LCNet backbone implementation
+│   ├── svtr_components.py    # SVTR transformer components
+│   ├── svtr_lcnet.py         # Combined SVTR-LCNet model
+│   └── pp_ocrv3_rec.py       # Main PP-OCRv3 model with CTC head
+├── utils/
+│   ├── __init__.py
+│   ├── transform.py          # Data preprocessing and augmentation
+│   ├── postprocess.py        # CTC decoding and postprocessing
+│   └── losses.py             # Loss functions including CTC loss
+├── data/
+│   └── dataset.py            # Dataset classes for training and evaluation
+├── train.py                  # Training script
+├── inference.py              # Inference script
+├── requirements.txt          # Dependencies
+└── README.md                 # This file
 ```
 
-## Installation
+## 🚀 Quick Start
 
+### Installation
+
+1. **Clone the repository**:
 ```bash
-# Clone the repository
 git clone <repository-url>
-cd svtrv2-pytorch
-
-# Install dependencies
-pip install torch torchvision numpy pillow matplotlib
-
-# Optional: Install additional dependencies for demo
-pip install opencv-python
+cd pp-ocrv3-pytorch
 ```
 
-## Quick Start
-
-### 1. Basic Model Usage
-
-```python
-from svtrv2_model import create_svtrv2_model
-import torch
-
-# Create model with default configuration
-model = create_svtrv2_model()
-
-# Create sample input (batch_size=2, channels=3, height=32, width=128)
-images = torch.randn(2, 3, 32, 128)
-
-# Training mode
-model.set_training_mode(True)
-targets = torch.randint(1, 1000, (2, 25))  # Random target sequences
-output = model(images, targets)
-print(f"Training loss: {output['loss']}")
-
-# Inference mode
-model.set_training_mode(False)
-with torch.no_grad():
-    output = model(images)
-    predictions = output['predictions']
-    print(f"Predictions: {predictions}")
-```
-
-### 2. Custom Configuration
-
-```python
-# Custom model configuration
-config = {
-    'encoder_dims': [64, 128, 256],      # Smaller model
-    'encoder_depths': [4, 4, 4],         # Fewer layers
-    'num_classes': 1000,                 # Custom vocabulary size
-    'max_text_length': 20,               # Shorter sequences
-}
-
-model = create_svtrv2_model(config)
-```
-
-### 3. Run Demo
-
+2. **Install dependencies**:
 ```bash
-# Run demo with synthetic data
-python demo.py --mode demo --num_epochs 5 --batch_size 16
-
-# Training on custom dataset
-python demo.py --mode train --data_path /path/to/dataset
-
-# Inference with trained model
-python demo.py --mode inference --model_path /path/to/model.pth
+pip install -r requirements.txt
 ```
 
-## Model Configuration
+### Dataset Preparation
 
-The model supports extensive customization through configuration parameters:
+Prepare your dataset in the following format:
 
-### Image Input
-- `img_size`: Input image dimensions (default: (32, 128))
-- `in_channels`: Input channels (default: 3)
-
-### Encoder Settings
-- `encoder_dims`: Channel dimensions for each stage
-- `encoder_depths`: Number of blocks per stage
-- `encoder_num_heads`: Number of attention heads per stage
-- `encoder_mixer`: Mixer patterns for each block
-- `encoder_local_k`: Local kernel sizes for conv mixers
-- `encoder_sub_k`: Spatial reduction ratios
-- `use_pos_embed`: Whether to use positional embeddings
-
-### Decoder Settings
-- `num_classes`: Vocabulary size (number of characters)
-- `max_text_length`: Maximum text sequence length
-- `decoder_hidden_channels`: Hidden dimensions in decoder
-- `decoder_sequence_hidden_size`: LSTM hidden size
-- `decoder_sequence_layers`: Number of LSTM layers
-- `decoder_num_residual_blocks`: Number of residual blocks
-
-## Training
-
-### Basic Training Loop
-
-```python
-import torch.optim as optim
-from torch.utils.data import DataLoader
-
-# Setup
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model = create_svtrv2_model(config).to(device)
-optimizer = optim.AdamW(model.parameters(), lr=0.00065, weight_decay=0.05)
-
-# Training loop
-model.set_training_mode(True)
-for epoch in range(num_epochs):
-    for images, targets in train_loader:
-        images, targets = images.to(device), targets.to(device)
-        
-        optimizer.zero_grad()
-        output = model(images, targets)
-        loss = output['loss']
-        loss.backward()
-        optimizer.step()
+**Directory structure**:
+```
+dataset/
+├── images/
+│   ├── img1.jpg
+│   ├── img2.jpg
+│   └── ...
+├── train_labels.txt
+└── val_labels.txt
 ```
 
-### Recommended Training Settings
-
-Based on the original PaddleOCR configuration:
-
-- **Optimizer**: AdamW with lr=0.00065, weight_decay=0.05
-- **Scheduler**: OneCycleLR with warmup
-- **Batch Size**: 256 per GPU (adjust based on memory)
-- **Mixed Precision**: Recommended for faster training
-- **Gradient Clipping**: Optional, helps with stability
-
-## Inference
-
-### Basic Inference
-
-```python
-model.set_training_mode(False)
-model.eval()
-
-with torch.no_grad():
-    images = preprocess_images(image_paths)  # Your preprocessing
-    output = model(images)
-    predictions = output['predictions']
-    
-    # Convert predictions to text
-    texts = decode_predictions(predictions, idx_to_char)
+**Label file format**:
+```
+img1.jpg	Hello World
+img2.jpg	PyTorch OCR
+img3.jpg	Text Recognition
 ```
 
-### CTC Decoding
+### Training
 
-The model includes greedy CTC decoding by default. For better results, you can implement:
+**Basic training command**:
+```bash
+python train.py \
+    --data_dir ./dataset/images \
+    --train_label ./dataset/train_labels.txt \
+    --val_label ./dataset/val_labels.txt \
+    --output_dir ./output \
+    --epochs 100 \
+    --batch_size 32 \
+    --lr 1e-3
+```
 
-- **Beam Search**: For better accuracy (not included)
-- **Language Model Integration**: For context-aware decoding
-- **Custom Post-processing**: For domain-specific requirements
+**Advanced training with custom settings**:
+```bash
+python train.py \
+    --data_dir ./dataset/images \
+    --train_label ./dataset/train_labels.txt \
+    --val_label ./dataset/val_labels.txt \
+    --character_dict ./custom_chars.txt \
+    --output_dir ./output \
+    --epochs 200 \
+    --batch_size 16 \
+    --lr 1e-3 \
+    --weight_decay 1e-4 \
+    --img_height 48 \
+    --img_width 320 \
+    --device cuda \
+    --num_workers 8
+```
 
-## Model Variants
+### Inference
 
-You can create different model sizes by adjusting the configuration:
+**Single image inference**:
+```bash
+python inference.py \
+    --model_path ./output/best_model.pth \
+    --image_path ./test_image.jpg \
+    --save_result ./result.png
+```
 
-### Tiny Model (Fast Inference)
+**Batch inference**:
 ```python
-tiny_config = {
-    'encoder_dims': [64, 128, 192],
-    'encoder_depths': [3, 3, 3],
-    'decoder_hidden_channels': 128,
-    'decoder_sequence_hidden_size': 128,
+from inference import batch_inference
+
+batch_inference(
+    model_path='./output/best_model.pth',
+    image_folder='./test_images/',
+    output_file='./results.txt'
+)
+```
+
+## 🛠️ Model Architecture Details
+
+### LCNet Backbone
+
+The LCNet (Lightweight CNN) backbone features:
+- Depthwise separable convolutions
+- Hard-Swish activation functions
+- Squeeze-and-Excitation (SE) modules
+- Efficient architecture with multiple scaling factors
+
+### SVTR Components
+
+The SVTR transformer includes:
+- **Global Mix Blocks**: Combine local convolution and global attention
+- **Local and Global Attention**: Capture both local features and long-range dependencies
+- **Position Encoding**: Learned positional embeddings for sequence modeling
+- **Layer Normalization**: Pre-norm architecture for stable training
+
+### CTC Head
+
+The CTC (Connectionist Temporal Classification) head:
+- Maps feature sequences to character probabilities
+- Handles variable-length sequences without explicit alignment
+- Includes blank token for handling repetitions and empty positions
+
+## 📊 Model Variants
+
+Three model sizes are available:
+
+| Model | Parameters | Speed | Accuracy | Use Case |
+|-------|------------|-------|----------|----------|
+| **Tiny** | ~2M | Fast | Good | Mobile/Edge |
+| **Small** | ~5M | Medium | Better | Balanced |
+| **Base** | ~12M | Slower | Best | Server |
+
+## 🎯 Training Features
+
+### Data Augmentation
+- **TIA (Text Image Augmentation)**: Distortion and perspective changes
+- **Random Cropping**: Improves robustness to different image sizes
+- **Color Jittering**: Handles various lighting conditions
+
+### Training Strategies
+- **CosineAnnealingLR**: Smooth learning rate scheduling
+- **AdamW Optimizer**: Better generalization than Adam
+- **Gradient Clipping**: Stable training for RNN components
+- **Mixed Precision**: Faster training with FP16 (optional)
+
+### Loss Functions
+- **CTC Loss**: Primary loss for sequence learning
+- **Focal Loss**: Handles class imbalance (optional)
+- **Distillation Loss**: Knowledge transfer from larger models
+
+## 🔧 Customization
+
+### Adding New Languages
+
+1. **Prepare character dictionary**:
+```
+# characters.txt
+a
+b
+c
+...
+```
+
+2. **Update model configuration**:
+```python
+model = build_pp_ocrv3_rec_model(
+    character_dict_path='./characters.txt',
+    use_space_char=True  # For languages with spaces
+)
+```
+
+### Custom Model Configuration
+
+```python
+# Custom backbone configuration
+backbone_config = {
+    'dims': 64,        # Transformer dimension
+    'depths': 2,       # Number of transformer layers  
+    'num_heads': 8,    # Attention heads
+    'mixer': ['Global'] * 2,  # Attention types
+    'img_size': [48, 320],    # Input image size
+    'out_channels': 256,      # Output feature channels
 }
+
+model = PP_OCRv3_Rec(backbone_config=backbone_config)
 ```
 
-### Large Model (High Accuracy)
-```python
-large_config = {
-    'encoder_dims': [192, 384, 576],
-    'encoder_depths': [8, 8, 8],
-    'decoder_hidden_channels': 512,
-    'decoder_sequence_hidden_size': 512,
-}
+## 📈 Performance Tips
+
+### Training Optimization
+1. **Batch Size**: Use largest batch size that fits in memory
+2. **Learning Rate**: Start with 1e-3, reduce if loss doesn't decrease
+3. **Image Size**: Larger images = better accuracy but slower training
+4. **Data Quality**: Clean, properly labeled data is crucial
+
+### Inference Optimization
+1. **TensorRT**: Use TensorRT for faster GPU inference
+2. **ONNX**: Convert to ONNX for cross-platform deployment
+3. **Quantization**: INT8 quantization for mobile deployment
+4. **Batch Inference**: Process multiple images together
+
+## 🧪 Evaluation Metrics
+
+The model supports various evaluation metrics:
+- **Character Accuracy**: Percentage of correctly recognized characters
+- **Word Accuracy**: Percentage of completely correct words
+- **Edit Distance**: Levenshtein distance between prediction and ground truth
+- **BLEU Score**: For sequence-to-sequence evaluation
+
+## 🐛 Troubleshooting
+
+### Common Issues
+
+**1. CUDA Out of Memory**
+```bash
+# Reduce batch size
+python train.py --batch_size 8
+
+# Use gradient accumulation
+python train.py --batch_size 16 --accumulate_grad_batches 2
 ```
 
-## Performance Considerations
+**2. Model Not Converging**
+```bash
+# Check learning rate
+python train.py --lr 5e-4
 
-### Memory Usage
-- The model uses attention mechanisms that scale quadratically with sequence length
-- Use gradient checkpointing for training with limited memory
-- Consider reducing image width for longer sequences
-
-### Speed Optimization
-- Use mixed precision training (AMP)
-- Optimize batch size for your hardware
-- Consider TensorRT for inference optimization
-
-### Accuracy Tips
-- Use appropriate data augmentation
-- Fine-tune on domain-specific data
-- Experiment with different mixer patterns
-- Consider ensemble methods for critical applications
-
-## Differences from PaddleOCR
-
-This PyTorch implementation maintains the same architectural principles as the original PaddleOCR version while adapting to PyTorch conventions:
-
-1. **Framework Differences**: PyTorch-style modules and training loops
-2. **Implementation Details**: Some low-level optimizations may differ
-3. **Default Parameters**: Adjusted for typical PyTorch workflows
-4. **Additional Features**: More flexible configuration options
-
-## Contributing
-
-Contributions are welcome! Areas for improvement:
-
-- [ ] Beam search CTC decoding
-- [ ] Additional mixer types
-- [ ] Pre-trained model weights
-- [ ] Data loading utilities
-- [ ] Evaluation metrics
-- [ ] Export to ONNX/TensorRT
-
-## License
-
-This implementation is provided for research and educational purposes. Please refer to the original PaddleOCR license for commercial usage guidelines.
-
-## Citation
-
-If you use this implementation, please cite the original SVTRv2 paper:
-
-```bibtex
-@article{du2024svtrv2,
-    title={SVTRv2: CTC Beats Encoder-Decoder Models in Scene Text Recognition},
-    author={Du, Yongkun and Chen, Zhineng and Xie, Hongtao and Jia, Caiyan and Jiang, Yu-Gang},
-    journal={arXiv preprint arXiv:2411.15858},
-    year={2024}
-}
+# Verify data format
+python train.py --log_freq 10  # More frequent logging
 ```
 
-## Acknowledgments
+**3. Poor Accuracy**
+- Verify label file format
+- Check character dictionary completeness  
+- Increase training data diversity
+- Adjust image preprocessing parameters
 
-- Original SVTRv2 implementation by PaddleOCR team
-- Vision Transformer implementations that inspired this work
-- PyTorch community for excellent documentation and tools
+## 📚 References
+
+1. **PP-OCRv3 Paper**: [PP-OCRv3: More Attempts for the Improvement of Ultra Lightweight OCR System](https://arxiv.org/abs/2206.03001)
+2. **SVTR Paper**: [Scene Text Recognition with a Single Visual Model](https://arxiv.org/abs/2205.00159)
+3. **LCNet Paper**: [PP-LCNet: A Lightweight CPU Convolutional Neural Network](https://arxiv.org/abs/2109.15099)
+4. **CTC Paper**: [Connectionist Temporal Classification](https://www.cs.toronto.edu/~graves/icml_2006.pdf)
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- **PaddleOCR Team**: For the original PP-OCRv3 implementation
+- **PyTorch Team**: For the excellent deep learning framework
+- **Open Source Community**: For various components and inspirations
+
+## 📞 Support
+
+If you encounter any issues or have questions:
+1. Check the [Issues](../../issues) page
+2. Read the documentation thoroughly
+3. Create a new issue with detailed information
+
+---
+
+**Happy Text Recognition! 🎉**
